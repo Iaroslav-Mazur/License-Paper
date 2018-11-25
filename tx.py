@@ -46,12 +46,12 @@ class Block_Header():
 			header_hash = hashlib.sha256(header_plus_nonce).hexdigest() #or, maybe, do double-hash?
 			if int(header_hash, 16) < self.pow_target:
 				self.nonce = nonce
-				print("Success with nonce: ", nonce)
+				print("{}: Success with nonce: ".format(datetime.now().time(), nonce))
 				print("Hash is %s" % header_hash)
 				return (header_hash, nonce)
 
-		print("Failed after %d (max_nonce) tries" % nonce)
-		return nonce
+		print("Failed after %d (max_nonce) tries" % max_nonce)
+		return max_nonce
 
 
 
