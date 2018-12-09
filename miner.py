@@ -140,21 +140,23 @@ def mine_for_life(blockchain, blockchain_lock, miners_pubkey_compressed, STATE_C
 				header.nonce = nonce
 				mined_block = tx.Block(header, candidate.transactions)
 
+				blockchain_lock.acquire() #what exactly gets broken if this is moved lower?
 				highest_block_hash = blockchain[-1].get_hash_hex()
 				if highest_block_hash != parent_block_hash:
 					print("Right after I've mined the new block, the parent block with hash {} has been \
 							replaced by the block with hash {}! Gotta start mining the new block from zero.\
 							Pausing...".format(parent_block_hash, highest_block_hash))
+					blockchain_lock.release()
 					wait_long_enough()
 					return
 
 				if len(blockchain) > block_to_be_mined_nr:
 					print("{}: Block {} was mined by someone else right after I've mined it myself \
 						trying {} hashes. Pausing...".format(datetime.now().time(), block_to_be_mined_nr, nonce))
+					blockchain_lock.release()
 					wait_long_enough()
 					return
 				
-				blockchain_lock.acquire()
 				blockchain.insert(block_to_be_mined_nr, mined_block)
 				blockchain_lock.release()
 
