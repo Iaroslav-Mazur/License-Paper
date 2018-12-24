@@ -481,7 +481,7 @@ def maximize_active_peers():
 						print("\n{}: active peers before: {}\n".format(datetime.now().time(), previous_active_peers_ports))
 						print("\n{}: active peers after: {}\n".format(datetime.now().time(), active_peers_ports))
 					else:
-						# print("{}: still trying...".format(datetime.now().time()))
+						# print("{}: still trying...".format(datetime.now().time())) 
 						break
 					# previous_active_peers_ports = current_active_peers_ports #shouldn't it be here?
 				if len(peers_socks_vers_out) >= MAX_ACTIVE_CONNECTIONS_OUT:
