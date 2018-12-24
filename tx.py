@@ -65,6 +65,12 @@ class Block():
 		header_hash = hashlib.sha256(header_plus_nonce).hexdigest()
 		return header_hash
 
+	def get_parent_hash(self):
+		return self.block_header.prev_block_hash
+
+	def get_nonce(self):
+		return self.block_header.nonce
+
 
 class Transaction():
 	def __init__(self, inputs, outputs):

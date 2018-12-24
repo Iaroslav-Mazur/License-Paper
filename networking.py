@@ -17,6 +17,7 @@ from random import shuffle
 import hashlib
 import copy
 
+
 max_peers_lock = Lock() #the lock used to NOT accept more peers than I should
 
 SEED_NODE_PORT = 1500
@@ -39,6 +40,7 @@ priv_key = key_gen.generate_a_private_key()
 pub_key_compressed = key_gen.compress_the_public_key_point(key_gen.generate_the_public_key_point(priv_key))
 
 peers_socks_vers_out_lock = Lock() #must be used to avoid sending different requests to the same peers at the same time 
+
 
 class InvalidFirstCommandException(Exception):
 	pass
@@ -166,50 +168,47 @@ def talk_to_a_client(conn, addr):
 		
 def react_to_take_new_block(blockchain, blockchain_lock, new_block_id, new_block):
 	blockchain_lock.acquire()
-	if new_block_id == len(blockchain): 
-		#accept the direct child of the current highest block
+	len_blockchain = len(blockchain)
+	if new_block_id == len_blockchain:
+		#accept the direct child of the highest block
 		parent_block = blockchain[new_block_id-1]
-		if miner.is_block_valid(new_block, parent_block) is True:
-			blockchain.insert(new_block_id, new_block)
-			print("{}: Added the received block {}  with hash {} to the blockchain"\
+		if miner.is_block_valid(new_block, parent_block):
+			blockchain.append(new_block)
+			print("{}: Appended the received block {}  with hash {} to the blockchain"\
 				.format(datetime.now().time(), new_block_id, new_block.get_hash_hex()))
 		else:
-			print("{}: the new block, {}, is invalid".format(datetime.now().time(), new_block_id))
+			print("{}: the new block {} is invalid".format(datetime.now().time(), new_block_id))
 
-	elif len(blockchain) > 1 and len(blockchain) - 1 == new_block_id: 
-		#accept new block with the same height as the latest one
+	elif new_block_id > 0 and new_block_id == len_blockchain - 1:
+		#accept new block with the same height as the highest one
 		parent_block = blockchain[new_block_id-1]
-		current_latest_block = blockchain[new_block_id]
-		if new_block.block_header.prev_block_hash == current_latest_block.block_header.prev_block_hash:
-			if miner.is_block_valid(new_block, parent_block) is True:
-				# accept it only if it's been more difficult to mine:
-				current_latest_block = blockchain[new_block_id]
-				if new_block.block_header.nonce > current_latest_block.block_header.nonce:
+		highest_block = blockchain[new_block_id]
+		if new_block.get_parent_hash() == highest_block.get_parent_hash()\
+			and miner.is_block_valid(new_block, parent_block):
+				new_block_hash = new_block.get_hash_hex()
+				highest_block_hash = highest_block.get_hash_hex()
+
+				# accept it only if it has a bigger Proof Of Work:
+				new_block_nonce = new_block.get_nonce()
+				highest_block_nonce = highest_block.get_nonce()
+				if new_block_nonce > highest_block_nonce:
 					blockchain[new_block_id] = new_block
 					#help propagate the replaced block
 					print("{}: Replaced the latest block {} with hash {} with a new one that's been \
 						more difficult to mine with the hash {}"\
-						.format(datetime.now().time(), new_block_id, current_latest_block.get_hash_hex(), \
-							new_block.get_hash_hex()))
+						.format(datetime.now().time(), new_block_id, highest_block_hash, new_block_hash))
 				
-				elif new_block.block_header.nonce == current_latest_block.block_header.nonce:
-					new_block_plus_nonce = new_block.block_header.header + bytes(new_block.block_header.nonce)
-					new_block_hash = hashlib.sha256(new_block_plus_nonce).hexdigest()
-
-					current_latest_block_plus_nonce = current_latest_block.block_header.header + \
-					bytes(current_latest_block.block_header.nonce)
-					current_latest_block_hash = hashlib.sha256(current_latest_block_plus_nonce).hexdigest()
-					
-					if int(new_block_hash, 16) < int(current_latest_block_hash, 16):
+				elif new_block_nonce == highest_block_nonce:
+					if int(new_block_hash, 16) < int(highest_block_hash, 16):
 						blockchain[new_block_id] = new_block
 						#help propagate the replaced block
 						print("{}: Replaced the latest block {} with hash {} with a new one (hash: {}) \
 							with the same nonce, but smaller (int-wise) hash"\
-							.format(datetime.now().time(), new_block_id, current_latest_block.get_hash_hex(), \
-								new_block.get_hash_hex()))
+							.format(datetime.now().time(), new_block_id, highest_block_hash, new_block_hash))
 	else:
-		print("{}: The new block, {}, isn't the direct child or grandchild of block {}"\
-			.format(datetime.now().time(), new_block_id, len(blockchain)-1))
+		print("{}: The new block {} isn't the direct child nor a sibling of block {}"\
+			.format(datetime.now().time(), new_block_id, len_blockchain-1))
+	
 	blockchain_lock.release()
 
 
@@ -302,7 +301,7 @@ def connect_to_a_peer(peers_port):
 					if len(blockchain) == wanted_block_nr + 1:
 						print("{}: The parent block at the height of {} is already present!".format(datetime.now().time(), wanted_block_nr))
 					else:
-						blockchain.insert(wanted_block_nr, block_received)
+						blockchain.insert(wanted_block_nr, block_received) #transform into an append()?
 						print("{}: Added block {} to the blockchain!".format(datetime.now().time(), wanted_block_nr))
 				
 				if STATE_CATCHING_UP == True:
@@ -391,7 +390,7 @@ def monitor_the_peer_connections():
 
 	def check_whether_alive():
 		try:
-			for sock_ver in peers_socks_vers_out[:]: #why [:] ?
+			for sock_ver in peers_socks_vers_out[:]: #[:] refers to a shallow copy
 				socket_to_the_peer = sock_ver[0]
 				peers_port_nr = sock_ver[1][2]
 				still_alive_msg = b'still alive'
