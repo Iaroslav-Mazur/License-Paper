@@ -27,6 +27,8 @@ MAX_ACTIVE_CONNECTIONS = MAX_ACTIVE_CONNECTIONS_IN + MAX_ACTIVE_CONNECTIONS_OUT
 STATE_CATCHING_UP = False
 active_peers_ports = []
 peers_socks_vers_out = [] #the sockets in which I'm always the first one to write
+
+#is it really needed?
 peers_socks_vers_in = [] #the sockets in which my peers are always the first ones to write
 
 blockchain_lock = Lock()
@@ -334,36 +336,34 @@ def connect_to_more_peers(peers_ports):
 	#connect to as many peers as possible, starting from peers_ports
 	ports_to_be_tried = peers_ports
 	ports_already_tried = []
-	while len(ports_to_be_tried)>0:
+	while len(peers_socks_vers_out) < MAX_ACTIVE_CONNECTIONS_OUT and len(ports_to_be_tried) > 0:
 		port_nr = ports_to_be_tried[0]
-		ports_already_tried.append(port_nr)
 
-		if len(peers_socks_vers_out) < MAX_ACTIVE_CONNECTIONS_OUT:
-			peers_socks_vers_out_lock.acquire()
-			if port_nr != my_port_nr and find_sock_out(port_nr) is None:
-				connection_result = connect_to_a_peer(port_nr)
-				if type(connection_result) is tuple:
-					peers_socks_vers_out.append(connection_result)
-					# print("{}: Appended port {} from inside connect_to_more_peers".format(datetime.now().time(), port_nr))
-					remember_peers()
-				elif type(connection_result) is list:
-					#the peer is full; got his peers_list
-					for peer in connection_result:
-						if peer not in ports_already_tried:
-							ports_to_be_tried.append(peer)
-				else:
-					print("{}: Couldn't connect to a peer: something went wrong!".format(datetime.now().time()))
-					# raise Exception("Couldn't connect to a peer: something went wrong!")
-			peers_socks_vers_out_lock.release()
+		peers_socks_vers_out_lock.acquire()
+		if find_sock_out(port_nr) is None and port_nr != my_port_nr:
+			connection_result = connect_to_a_peer(port_nr)
+			if type(connection_result) is tuple:
+				peers_socks_vers_out.append(connection_result)
+				# print("{}: Appended port {} from inside connect_to_more_peers".format(datetime.now().time(), port_nr))
+				remember_peers()
+			elif type(connection_result) is list:
+				#the peer is full; got his peers_list
+				for peer in connection_result:
+					if peer not in ports_already_tried and peer not in ports_to_be_tried:
+						ports_to_be_tried.append(peer)
+			else:
+				print("{}: While \"connecting to more peers\", couldn't connect to {}: something went wrong!".format(datetime.now().time(), port_nr))
+		peers_socks_vers_out_lock.release()
 		
-		else: 
-			break
-		ports_to_be_tried.remove(port_nr) #why?
+		ports_already_tried.append(port_nr)
+		ports_to_be_tried.remove(port_nr)
 
 def get_peer_ports(socket_to_the_peer):
 	#returns the randomized list of the peer's ports
+	peers_socks_vers_out_lock.acquire()
 	socket_to_the_peer.sendall(b'get_peer_ports')
 	peers_ports = pickle.loads(socket_to_the_peer.recv(1024))
+	peers_socks_vers_out_lock.release()
 	return shuffle(peers_ports)
 
 def become_a_server(my_port_nr):
@@ -374,7 +374,7 @@ def become_a_server(my_port_nr):
 	while True:
 		conn, addr = s.accept()
 		print("{}: Accepted a client.".format(datetime.now().time()))
-		Thread(target = talk_to_a_client, args = (conn,addr)).start() #does it end when the "client" shuts down?
+		Thread(target = talk_to_a_client, args = (conn,addr)).start()
 
 def remember_peers():
 	file_name = "recent_successful_connections" + str(my_port_nr)
@@ -433,7 +433,7 @@ def monitor_the_peer_connections():
 	file_name = "recent_successful_connections" + str(my_port_nr)
 	while True:
 		check_whether_alive()
-		if not os.path.isfile(file_name):
+		if not os.path.isfile(file_name): #move these if's outside the loop?
 			remember_peers()
 		elif os.stat(file_name).st_size == 0:
 				remember_peers()
@@ -449,7 +449,10 @@ def shutdown_and_close(sock):
 def shutdown_close_remove(sock_ver):
 	shutdown_and_close(sock_ver[0])
 	active_peers_ports.remove(sock_ver[1][2])
+	peers_socks_vers_out_lock.acquire()
 	peers_socks_vers_out.remove(sock_ver)
+	peers_socks_vers_out_lock.release()
+	
 	for tuples in peers_socks_vers_in:
 		if sock_ver == tuples[1][2]:
 			peers_socks_vers_in.remove(sock_ver)
@@ -503,6 +506,7 @@ def print_blockchain_state():
 			for i in range(1, len(blockchain)):
 				print("{}: Block {} hash: {}".format(datetime.now().time(), i, blockchain[i].get_hash_hex()))
 			current_bc_len = new_bc_len
+		time.sleep(1)
 
 
 def notify_peers_about_new_blocks():
@@ -573,6 +577,7 @@ def notify_peers_about_new_blocks():
 				
 				#deep copy??
 				parent_block = copy.deepcopy(replaced_block)
+			time.sleep(1) #brought massive improvement!
 	except Exception as e:
 		print("{}: {}".format(datetime.now().time(), e))
 	finally:
@@ -665,7 +670,8 @@ Thread(target = maximize_active_peers).start()
 # Thread(target = print_active_peers_ports).start()
 
 while len(peers_socks_vers_out) == 0:
-	pass
+	time.sleep(1)
+
 Thread(target = notify_peers_about_new_blocks).start()
 Thread(target = miner.mine_for_life, args = [blockchain, blockchain_lock, pub_key_compressed, STATE_CATCHING_UP, peers_socks_vers_out]).start()
 # Thread(target = print_blockchain_state).start()

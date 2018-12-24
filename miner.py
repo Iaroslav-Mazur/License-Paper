@@ -90,6 +90,8 @@ def mine_for_life(blockchain, blockchain_lock, miners_pubkey_compressed, STATE_C
 					parent_block_hash = highest_block_hash
 					initial_time = current_time
 
+			time.sleep(1)
+
 
 	def mine_next_block():
 		block_to_be_mined_nr = len(blockchain)
@@ -185,3 +187,4 @@ def mine_for_life(blockchain, blockchain_lock, miners_pubkey_compressed, STATE_C
 	
 	while True:
 		mine_next_block()
+		#time.sleep(1)
