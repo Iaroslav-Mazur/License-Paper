@@ -167,14 +167,8 @@ def mine_for_life(blockchain, blockchain_lock, miners_pubkey_compressed, STATE_C
 				wait_long_enough()
 				return (header, nonce)
 
-			#nanosleep to reduce CPU consumption (creates de-sync problems when the waiting time is big)
-			# micro_sleep(10)
-
 		print("Failed after %d (max_nonce) tries" % max_nonce)
 		return
-
-
-	print("{}: STATE_CATCHING_UP: ".format(datetime.now().time(), STATE_CATCHING_UP))
 
 	max_nonce = 2 ** 32  # 4 billion
 
@@ -187,4 +181,3 @@ def mine_for_life(blockchain, blockchain_lock, miners_pubkey_compressed, STATE_C
 	
 	while True:
 		mine_next_block()
-		#time.sleep(1)
