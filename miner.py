@@ -69,10 +69,11 @@ def mine_for_life(blockchain, blockchain_lock, miners_pubkey_compressed, STATE_C
 
 			chain_height = len(blockchain)
 			if chain_height > block_to_be_mined_nr:
-				block_to_be_mined_nr = chain_height
 				print("\n{}: While inside wait_long_enough, the block {} has been mined by someone!\
 					The block that should be mined now is {}"\
 					.format(datetime.now().time(), block_to_be_mined_nr, chain_height))
+				block_to_be_mined_nr = chain_height
+				parent_block_hash = blockchain[chain_height - 1].get_hash_hex()
 				initial_time = current_time
 			else:
 				highest_block_hash = blockchain[chain_height - 1].get_hash_hex()

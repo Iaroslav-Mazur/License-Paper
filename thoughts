@@ -1,8 +1,4 @@
-Ideas to reduce CPU load:
-	- put the mining process to sleep after every hash check
-
 How to make the code more readable:
-	- place functions in the order in which they are called
 	- use readable names for both variables and functions
 	- make the functions do a single thing only
 	- split the code in more files/classes
@@ -10,3 +6,4 @@ How to make the code more readable:
 Problems:
 	- when a node mines a new block, it somehow becomes more likely to be the first to mine the next several blocks
 	- when a new node appears while the others are intensively mining(or waiting?), it cannot catch up - desync happens
+	- maximize_active_peers does not do its job!
