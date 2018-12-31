@@ -7,3 +7,4 @@ Problems:
 	- when a node mines a new block, it somehow becomes more likely to be the first to mine the next several blocks
 	- when a new node appears while the others are intensively mining(or waiting?), it cannot catch up - desync happens
 	- maximize_active_peers does not do its job!
+	- when a node quits, his past peers continue trying to send him new nodes via a "Broken pipe"

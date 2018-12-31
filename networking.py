@@ -371,7 +371,8 @@ def get_peer_ports(socket_to_the_peer):
 	socket_to_the_peer.sendall(b'get_peer_ports')
 	peers_ports = pickle.loads(socket_to_the_peer.recv(1024))
 	peers_socks_vers_out_lock.release()
-	return shuffle(peers_ports)
+	shuffle(peers_ports)
+	return peers_ports
 
 
 def become_a_server(my_port_nr):
@@ -407,17 +408,20 @@ def monitor_the_peer_connections():
 				
 				peers_socks_vers_out_lock.acquire()
 				socket_to_the_peer.settimeout(1)
-				socket_to_the_peer.sendall(still_alive_msg)
 				try:
+					socket_to_the_peer.sendall(still_alive_msg)
+					# print("\nSent still_alive to {}\n".format(peers_port_nr))
 					reply = socket_to_the_peer.recv(len(still_alive_msg))
 					peers_socks_vers_out_lock.release()
 					if reply != still_alive_msg:
+						print("{}: +1 missed 'still alive' for {}".format(datetime.now().time(), peers_port_nr))
 						raise PeerNotAliveException("The peer has missed 1 still_alive")
 					else:
-						 #the peer is still alive - reset its failed_still_alives counter
-						 failed_still_alives[peers_port_nr] = 0
+						#the peer is still alive - reset its failed_still_alives counter
+						# print("\nReceived still_alive from {}\n".format(peers_port_nr))
+						failed_still_alives[peers_port_nr] = 0
 
-				except (PeerNotAliveException, socket.timeout):
+				except (IOError, PeerNotAliveException, socket.timeout):
 					if peers_socks_vers_out_lock.locked():
 						peers_socks_vers_out_lock.release()
 					if peers_port_nr in failed_still_alives:
@@ -429,7 +433,6 @@ def monitor_the_peer_connections():
 							remember_peers()
 					else:
 						failed_still_alives[peers_port_nr] = 1
-					# print("{}: +1 missed 'still alive' for {}".format(datetime.now().time(), peers_port_nr))
 				
 				finally:
 					socket_to_the_peer.settimeout(None)
@@ -482,7 +485,7 @@ def maximize_active_peers():
 			len_peers_socks_vers_out = len(peers_socks_vers_out)
 			if len_peers_socks_vers_out < MAX_NR_OF_CONN_OUT:
 				range_to_parse = list(range(0,len_peers_socks_vers_out))
-				range_to_parse = shuffle(range_to_parse)
+				shuffle(range_to_parse)
 				for i in range_to_parse:
 					sock_ver = peers_socks_vers_out[i]
 					potential_peers = get_peer_ports(sock_ver[0])
@@ -561,13 +564,14 @@ def notify_peers_about_new_blocks():
 							new_block.get_hash_hex(), peer))
 				except Exception as e:
 					print("{}: Something went wrong when trying to forward the new block {} to a peer: {}"\
-						.format(datetime.now().time(), block_nr), e)
+						.format(datetime.now().time(), block_nr, e))
 
 				peers_socks_vers_out_lock.release()
 			time.sleep(1) #brought massive improvement!
 
 	except Exception as e:
 		print("\n{}: Stopped notifying peers about new blocks!\nCause: {}".format(datetime.now().time(), e))
+		print('Error on line {}'.format(sys.exc_info()[-1].tb_lineno), type(e).__name__, e)
 	
 	finally:
 		if peers_socks_vers_out_lock.locked():
