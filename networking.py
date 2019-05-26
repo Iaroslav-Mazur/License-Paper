@@ -105,6 +105,7 @@ def talk_to_a_client(conn, addr):
 				raise FullPeerException("Couldn't connect in return to {}: the peer is full!".format(addr_you))
 
 			peers_socks_vers_out.append(connection_result)
+			print("{}: Connected to {}".format(time(), addr_you))
 			remember_peers()
 				
 		peers_socks_vers_out_lock.release()
@@ -262,8 +263,6 @@ def connect_to_a_peer(peers_port): #peers_socks_vers_out_lock must be acquired w
 		if addr_you not in active_peers_ports: #are the above actions useless if addr_you is known?
 			active_peers_ports.append(addr_you)
 
-		print("{}: Connected to {}".format(time(), peers_port))
-		# peers_socks_vers_out.append((s, peers_version_msg))
 
 		#sync our blockchains:
 		my_top_block = len(blockchain) - 1
@@ -351,11 +350,12 @@ def connect_to_more_peers(peers_ports):
 			
 			if type(connection_result) is tuple:
 				peers_socks_vers_out.append(connection_result)
+				print("{}: Connected to {}".format(time(), port_nr))
 				remember_peers()
 
 			elif type(connection_result) is list: #the peer is full; got his peers_list
 				for peer in connection_result:
-					if peer not in peers_already_tried and peer not in potential_peers:
+					if peer not in peers_already_tried and peer not in potential_peers and peer != my_port_nr:
 						potential_peers.append(peer)
 			else:
 				print("{}: While \"connecting to more peers\", couldn't connect to {}: something went wrong!"\
@@ -621,44 +621,40 @@ if first_peer_port_nr and (first_peer_port_nr < 1024 or first_peer_port_nr > 655
 Thread(target = become_a_server, args = [my_port_nr]).start()
 
 recent_peers = []
-if args.friend_port_nr == None:
+if args.friend_port_nr is None:
 	file_name = "recent_successful_connections" + str(my_port_nr)
 	if os.path.isfile(file_name):
 		with open(file_name,'r') as f:
 			for line in f.readlines():
 				recent_peers.append(int(line))
-	if len(recent_peers) > 0:
-		connect_to_more_peers(recent_peers)
+		if len(recent_peers) > 0:
+			connect_to_more_peers(recent_peers)
 
-	if len(recent_peers) == 0 or len(peers_socks_vers_out) == 0:
+	if len(peers_socks_vers_out) is 0:
 		first_peer_port_nr = SEED_NODE_PORT
 
 try:
-	if first_peer_port_nr != SEED_NODE_PORT or \
-		first_peer_port_nr == SEED_NODE_PORT and my_port_nr != SEED_NODE_PORT\
-		and first_peer_port_nr != None:
-		socket_to_first_peer = find_socket_to(first_peer_port_nr)
+	if first_peer_port_nr != None and (first_peer_port_nr != SEED_NODE_PORT \
+		or my_port_nr != SEED_NODE_PORT):
+
 		peers_socks_vers_out_lock.acquire()
-		if socket_to_first_peer is None:
-			connection_result = connect_to_a_peer(first_peer_port_nr)
-			if type(connection_result) is tuple:
-				peers_socks_vers_out.append(connection_result)
-				print("{}: Connected to {} from main".format(time(), first_peer_port_nr))
-			peers_socks_vers_out_lock.release()
+		
+		connection_result = connect_to_a_peer(first_peer_port_nr)
+		if type(connection_result) is tuple:
+			peers_socks_vers_out.append(connection_result)
+			print("{}: Connected to {} from main".format(time(), first_peer_port_nr))
+		peers_socks_vers_out_lock.release()
 
-			if type(connection_result) is tuple:
-				socket_to_first_peer = connection_result[0]
-				connect_to_peers_and_remember(socket_to_first_peer)
-
-			elif type(connection_result) is list:
-				connect_to_more_peers(connection_result)
-				if len(peers_socks_vers_out) == 0:
-					raise Exception("Couldn't connect to no peers: nobody is free!") #should never get here
-			else:
-				raise Exception("Connection to first_peer_port_nr has failed!")
-		else:
-			peers_socks_vers_out_lock.release()
+		if type(connection_result) is tuple:
+			socket_to_first_peer = connection_result[0]
 			connect_to_peers_and_remember(socket_to_first_peer)
+
+		elif type(connection_result) is list:
+			connect_to_more_peers(connection_result)
+			if len(peers_socks_vers_out) == 0:
+				raise Exception("Couldn't connect to no peers: nobody is free!") #should never get here
+		else:
+			raise Exception("Connection to first_peer_port_nr has failed!")
 			
 except Exception as e:
 	print("{}: {}".format(time(), e))
@@ -671,7 +667,7 @@ Thread(target = monitor_the_peer_connections).start()
 Thread(target = maximize_active_peers).start()
 # Thread(target = print_active_peers_ports).start()
 
-while len(peers_socks_vers_out) == 0:
+while len(peers_socks_vers_out) is 0:
 	Time.sleep(1)
 
 Thread(target = notify_peers_about_new_blocks).start()
