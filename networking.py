@@ -8,7 +8,7 @@ from threading import Lock
 import traceback
 import sys
 from threading import Lock
-import time
+import time as Time
 from datetime import datetime
 import argparse
 import os
@@ -39,6 +39,9 @@ priv_key = key_gen.generate_a_private_key()
 pub_key_compressed = key_gen.compress_the_public_key_point(key_gen.generate_the_public_key_point(priv_key))
 
 
+def time():
+	return datetime.now().time()
+
 class InvalidFirstCommandException(Exception):
 	pass
 class FullPeerException(Exception):
@@ -53,7 +56,7 @@ def talk_to_a_client(conn, addr):
 			raise InvalidFirstCommandException("not a valid first command!")
 		max_peers_lock.acquire()
 		if len(active_peers_ports) >= MAX_NR_OF_CONN_IN:
-			print("{}: {}, I'm full. Try connecting to my peers".format(datetime.now().time(), addr))
+			print("{}: {}, I'm full. Try connecting to my peers".format(time(), addr))
 			pickled_peers = pickle.dumps(active_peers_ports)
 			conn.sendall(pickled_peers)
 			raise Exception("Couldn't accept a new peer, cause I've got too many connections")
@@ -71,10 +74,10 @@ def talk_to_a_client(conn, addr):
 		conn.sendall(my_reply)
 		tmp = conn.recv(len(my_reply))
 		if tmp != my_reply:
-			print("{}: conn.recv(1024) != my_reply: {} != {}".format(datetime.now().time(), tmp, my_reply))
+			print("{}: conn.recv(1024) != my_reply: {} != {}".format(time(), tmp, my_reply))
 			raise Exception("conn.recv(1024) != my_reply")
 
-		my_version_msg = (time.time(), addr_you, my_port_nr, len(blockchain)-1)
+		my_version_msg = (Time.time(), addr_you, my_port_nr, len(blockchain)-1)
 		conn.sendall(pickle.dumps(my_version_msg))
 		if pickle.loads(conn.recv(1024)) != my_version_msg:
 			raise Exception("pickle.loads(conn.recv(1024)) != my_version_msg")
@@ -87,7 +90,7 @@ def talk_to_a_client(conn, addr):
 		if addr_you not in active_peers_ports:
 			active_peers_ports.append(addr_you)
 		peers_socks_vers_in.append((conn, peers_version_msg))
-		print("{}: Connected by {}".format(datetime.now().time(), addr_you))
+		print("{}: Connected by {}".format(time(), addr_you))
 
 		#connect to the new peer in return
 		connection_result = None
@@ -97,7 +100,7 @@ def talk_to_a_client(conn, addr):
 			connection_result = connect_to_a_peer(addr_you)
 			
 			if type(connection_result) is not tuple:
-				print("{}: {}".format(datetime.now().time(), connection_result))
+				print("{}: {}".format(time(), connection_result))
 				peers_socks_vers_out_lock.release()
 				raise FullPeerException("Couldn't connect in return to {}: the peer is full!".format(addr_you))
 
@@ -151,14 +154,14 @@ def talk_to_a_client(conn, addr):
 				new_block_tuple = conn.recv(1024)
 				block_id, block = pickle.loads(new_block_tuple)
 				print("{}: Received block {} with hash {}"\
-					.format(datetime.now().time(), block_id, block.get_hash_hex()))
+					.format(time(), block_id, block.get_hash_hex()))
 				Thread(target = react_to_take_new_block, \
 					args = [blockchain, blockchain_lock, block_id, block]).start()
 			else:
 				conn.sendall(b"I can't accept any new blocks while catching up!")
 		
 		else:
-			print("{}: \n \"{}\" is not a valid command!\n".format(datetime.now().time(), data))
+			print("{}: \n \"{}\" is not a valid command!\n".format(time(), data))
 	
 	conn.shutdown(socket.SHUT_RDWR); conn.close()
 
@@ -172,9 +175,9 @@ def react_to_take_new_block(blockchain, blockchain_lock, new_block_id, new_block
 		if miner.is_block_valid(new_block, parent_block):
 			blockchain.append(new_block)
 			print("{}: Appended the received block {}  with hash {} to the blockchain"\
-				.format(datetime.now().time(), new_block_id, new_block.get_hash_hex()))
+				.format(time(), new_block_id, new_block.get_hash_hex()))
 		else:
-			print("{}: the new block {} is invalid".format(datetime.now().time(), new_block_id))
+			print("{}: the new block {} is invalid".format(time(), new_block_id))
 
 	elif new_block_id > 0 and new_block_id == len_blockchain - 1:
 		#accept new block with the same height as the highest one
@@ -193,7 +196,7 @@ def react_to_take_new_block(blockchain, blockchain_lock, new_block_id, new_block
 					#help propagate the replaced block
 					print("{}: Replaced the latest block {} with hash {} with a new one that's been \
 						more difficult to mine with the hash {}"\
-						.format(datetime.now().time(), new_block_id, highest_block_hash, new_block_hash))
+						.format(time(), new_block_id, highest_block_hash, new_block_hash))
 				
 				elif new_block_nonce == highest_block_nonce:
 					if int(new_block_hash, 16) < int(highest_block_hash, 16):
@@ -201,23 +204,25 @@ def react_to_take_new_block(blockchain, blockchain_lock, new_block_id, new_block
 						#help propagate the replaced block
 						print("{}: Replaced the latest block {} with hash {} with a new one (hash: {}) \
 							with the same nonce, but smaller (int-wise) hash"\
-							.format(datetime.now().time(), new_block_id, highest_block_hash, new_block_hash))
+							.format(time(), new_block_id, highest_block_hash, new_block_hash))
 	else:
 		print("{}: The new block {} isn't the direct child nor a sibling of block {}"\
-			.format(datetime.now().time(), new_block_id, len_blockchain-1))
+			.format(time(), new_block_id, len_blockchain-1))
 	
 	blockchain_lock.release()
 
 
-def connect_to_a_peer(peers_port): #must be accompanied by the acquired peers_socks_vers_out_lock
-	print("{}: Trying to connect to {}".format(datetime.now().time(), peers_port))
+def connect_to_a_peer(peers_port): #peers_socks_vers_out_lock must be acquired when calling this method
+	print("{}: Connecting to {}".format(time(), peers_port))
 	try:
 		s = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
 		s.connect(('', peers_port))
 		
-		s.sendall(b'version_msg')
-		data = s.recv(1024)
-		if data != b'version_msg':
+		version_msg = b'version_msg'
+		s.sendall(version_msg)
+
+		data = s.recv(len(version_msg))
+		if data != version_msg:
 			peers_ports = pickle.loads(data)
 			if type(peers_ports) is list:
 				#the peer is full. return all of his neighbours
@@ -225,16 +230,16 @@ def connect_to_a_peer(peers_port): #must be accompanied by the acquired peers_so
 			else:
 				raise Exception("Smth strange received in response to my version_msg!")
 
-		my_version_msg_dumped = pickle.dumps((time.time(), peers_port, my_port_nr, len(blockchain) - 1))
+		my_version_msg_dumped = pickle.dumps((Time.time(), peers_port, my_port_nr, len(blockchain) - 1))
 		s.sendall(my_version_msg_dumped)
 		if s.recv(len(my_version_msg_dumped)) != my_version_msg_dumped:
-			raise Exception("What I've received in response isn't identical to my_version_msg_dumped!")
+			raise Exception("The echo to my_version_msg_dumped is invalid!")
 
 		my_version_msg = pickle.loads(my_version_msg_dumped)
 		anticipated_reply = bytes((str(my_version_msg[0]) + 'accepted').encode('UTF-8'))
+		
 		peers_verdict = s.recv(len(anticipated_reply))
 		s.sendall(peers_verdict)
-
 		if peers_verdict != anticipated_reply:
 			raise Exception("{} hasn't accepted me!".format(peers_port))
 
@@ -249,119 +254,116 @@ def connect_to_a_peer(peers_port): #must be accompanied by the acquired peers_so
 			s.sendall(bytes((str(current_time_you) + 'rejected').encode('UTF-8')))
 			raise Exception("I've rejected the peers_version_msg from {}".format(peers_port))
 
-		peers_echo = s.recv(len(time_accepted_msg))
-		if peers_echo != time_accepted_msg:
-			print("{}: {}  !=  {}".format(datetime.now().time(), peers_echo, time_accepted_msg))
-			raise Exception("The echo-msg after I've accepted {} isn't identical to mine".format(peers_port))
+		data = s.recv(len(time_accepted_msg))
+		if data != time_accepted_msg:
+			print("{}: {}  !=  {}".format(time(), data, time_accepted_msg))
+			raise Exception("The echo to time_accepted_msg after accepting {} is invalid".format(peers_port))
 
 		if addr_you not in active_peers_ports: #are the above actions useless if addr_you is known?
 			active_peers_ports.append(addr_you)
 
-		print("{}: Connected to {}".format(datetime.now().time(), peers_port))
+		print("{}: Connected to {}".format(time(), peers_port))
 		# peers_socks_vers_out.append((s, peers_version_msg))
 
 		#sync our blockchains:
 		my_top_block = len(blockchain) - 1
 		global STATE_CATCHING_UP
 		
-		if your_top_block > my_top_block and STATE_CATCHING_UP == False:
-			print("{}: detected that {} has more blocks than me".format(datetime.now().time(), addr_you))
+		#can't your_top_block become outdated till now?
+		if your_top_block > my_top_block and STATE_CATCHING_UP is False:
+			print("{}: {} has more blocks than me".format(time(), addr_you))
 			STATE_CATCHING_UP = True
 
 			blockchain_lock.acquire()
-			#what if your_top_block and my_top_block become outdated while the above lock is being acquired?
+
+			your_top_block = ask_for_peers_top_block(s, addr_you)
+			my_top_block = len(blockchain) - 1
+			
 			while your_top_block > my_top_block:
 				difference = your_top_block - my_top_block
 				print("{}: your_top_block({}) - my_top_block({}) = {}"\
-					.format(datetime.now().time(), your_top_block, my_top_block, difference))
+					.format(time(), your_top_block, my_top_block, difference))
 				
 				get_block_msg = b"get_block"
-				for i in range(1, difference+1):
-					print("continuing to loop in the for...")
 
+				for i in range(1, difference + 1):
 					s.sendall(get_block_msg)
+					
 					if s.recv(len(get_block_msg)) != get_block_msg:
-						print("{}: The echo to b\"get_block\" is invalid".format(datetime.now().time()))
+						print("{}: The echo to get_block_msg is invalid".format(time()))
 						STATE_CATCHING_UP = False
-						blockchain_lock.release()
 						break
+
 					wanted_block = my_top_block + i
 					s.sendall(pickle.dumps(wanted_block))
-					print("{}: Asked {} to send me block {}"\
-						.format(datetime.now().time(), addr_you, wanted_block))
+					print("{}: Asked {} to send me block {}".format(time(), addr_you, wanted_block))
+					
 					block_received = pickle.loads(s.recv(1024))
 					
 					if miner.is_block_valid(block_received, blockchain[wanted_block - 1]) is False:
 						STATE_CATCHING_UP = False
-						blockchain_lock.release()
 						break
 
-					if len(blockchain) == wanted_block + 1:
-						print("{}: The parent block at the height of {} is already present!"\
-							.format(datetime.now().time(), wanted_block))
+					if len(blockchain)-1 == wanted_block: #can this ever be True with the BC_lock held?
+						print("{}: The block {} is already present!".format(time(), wanted_block))
 					else:
-						blockchain.insert(wanted_block, block_received) #transform into an append()?
-						print("{}: Added block {} to the blockchain!"\
-							.format(datetime.now().time(), wanted_block))
+						blockchain.insert(wanted_block, block_received)
+						print("{}: Added block {} to the blockchain!".format(time(), wanted_block))
 				
-				if STATE_CATCHING_UP == True:
-					# your_top_block = ask_for_peers_top_block(s, addr_you)
-					s.sendall(b"reveal_your_top_block")
-					print("{}: Asked {} to tell me his highest block".format(datetime.now().time(), addr_you))	
-					your_top_block = pickle.loads(s.recv(1024))
-					my_top_block = len(blockchain) - 1
+				if STATE_CATCHING_UP is True:
+					your_top_block = ask_for_peers_top_block(s, addr_you)
+					my_top_block = len(blockchain)-1
 				else:
-					your_top_block = 0 #just to break the outer while loop
+					blockchain_lock.release()
+					your_top_block = 0 #in order to break the outer while loop
 			
-			if blockchain_lock.locked(): #use exceptions instead of this check?
+			if blockchain_lock.locked():
 				blockchain_lock.release()
-			STATE_CATCHING_UP = False #really needed?
+			
+			STATE_CATCHING_UP = False
 
-		peers_version_msg = pickle.loads(peers_version_msg)
-		return (s, peers_version_msg)
+		return (s, pickle.loads(peers_version_msg))
 			
 	except Exception as e:
-		print("{}: Couldn't connect to {}, at all: {}. Will try connecting to someone else"\
-			.format(datetime.now().time(), peers_port, e))
+		print("{}: Couldn't connect to {}: {}.".format(time(), peers_port, e))
 	finally:
 		if blockchain_lock.locked():
 			blockchain_lock.release()
 
 def ask_for_peers_top_block(socket, peer_addr):
 	socket.sendall(b"reveal_your_top_block")
-	print("{}: Asked {} to tell me his highest block".format(datetime.now().time(), peer_addr))	
+	print("{}: Asked {} to tell me his highest block".format(time(), peer_addr))	
 	your_top_block = pickle.loads(socket.recv(1024))
 
 	return your_top_block
 
 def connect_to_more_peers(peers_ports):
-	#connect to as many peers as possible, starting from peers_ports
-	ports_to_be_tried = peers_ports
-	ports_already_tried = []
+	#connect to as many peers as possible, starting with peers_ports
+	potential_peers = peers_ports
+	peers_already_tried = []
 	
-	while len(peers_socks_vers_out) < MAX_NR_OF_CONN_OUT and len(ports_to_be_tried) > 0:
-		port_nr = ports_to_be_tried[0]
+	while len(peers_socks_vers_out) < MAX_NR_OF_CONN_OUT and len(potential_peers) > 0:
+		port_nr = potential_peers[0]
 
 		peers_socks_vers_out_lock.acquire()
 		if find_socket_to(port_nr) is None and port_nr != my_port_nr:
 			connection_result = connect_to_a_peer(port_nr)
+			
 			if type(connection_result) is tuple:
 				peers_socks_vers_out.append(connection_result)
-				# print("{}: Appended port {} from inside connect_to_more_peers".format(\
-				# 	datetime.now().time(), port_nr))
 				remember_peers()
-			elif type(connection_result) is list:
-				#the peer is full; got his peers_list
+
+			elif type(connection_result) is list: #the peer is full; got his peers_list
 				for peer in connection_result:
-					if peer not in ports_already_tried and peer not in ports_to_be_tried:
-						ports_to_be_tried.append(peer)
+					if peer not in peers_already_tried and peer not in potential_peers:
+						potential_peers.append(peer)
 			else:
 				print("{}: While \"connecting to more peers\", couldn't connect to {}: something went wrong!"\
-					.format(datetime.now().time(), port_nr))
+					.format(time(), port_nr))
 		peers_socks_vers_out_lock.release()
 		
-		ports_already_tried.append(port_nr)
-		ports_to_be_tried.remove(port_nr)
+		peers_already_tried.append(port_nr)
+		potential_peers.remove(port_nr)
 
 
 def get_peer_ports(socket_to_the_peer):
@@ -381,7 +383,7 @@ def become_a_server(my_port_nr):
 	s.listen()
 	while True:
 		conn, addr = s.accept()
-		print("{}: Accepted a client.".format(datetime.now().time()))
+		print("{}: Accepted a client.".format(time()))
 		Thread(target = talk_to_a_client, args = (conn,addr)).start()
 
 
@@ -414,7 +416,7 @@ def monitor_the_peer_connections():
 					reply = socket_to_the_peer.recv(len(still_alive_msg))
 					peers_socks_vers_out_lock.release()
 					if reply != still_alive_msg:
-						print("{}: +1 missed 'still alive' for {}".format(datetime.now().time(), peers_port_nr))
+						print("{}: +1 missed 'still alive' for {}".format(time(), peers_port_nr))
 						raise PeerNotAliveException("The peer has missed 1 still_alive")
 					else:
 						#the peer is still alive - reset its failed_still_alives counter
@@ -428,7 +430,7 @@ def monitor_the_peer_connections():
 						failed_still_alives[peers_port_nr] += 1
 						if failed_still_alives[peers_port_nr] > 5:
 							print ("\n{}: {} is no longer alive!\n"\
-								.format(datetime.now().time(), peers_port_nr))
+								.format(time(), peers_port_nr))
 							shutdown_close_remove(sock_ver)
 							remember_peers()
 					else:
@@ -438,7 +440,7 @@ def monitor_the_peer_connections():
 					socket_to_the_peer.settimeout(None)
 
 		except Exception as e:
-			print("{}: {}".format(datetime.now().time(), e))
+			print("{}: {}".format(time(), e))
 		finally:
 			if peers_socks_vers_out_lock.locked():
 				peers_socks_vers_out_lock.release()
@@ -450,7 +452,7 @@ def monitor_the_peer_connections():
 			remember_peers()
 		elif os.stat(file_name).st_size == 0:
 				remember_peers()
-		time.sleep(2)
+		Time.sleep(2)
 
 
 def shutdown_and_close(sock):
@@ -477,7 +479,7 @@ def shutdown_close_remove(sock_ver):
 def maximize_active_peers():
 	#makes sure that at any given time, the node is connected to as many active peers as possible
 	while len(active_peers_ports) == 0:
-		time.sleep(1)
+		Time.sleep(1)
 	
 	peers_number = len(active_peers_ports)
 	while True:
@@ -494,17 +496,17 @@ def maximize_active_peers():
 				
 				#check whether the connections have, actually, happened:
 				if len(peers_socks_vers_out) > len_peers_socks_vers_out:
-					print("\n{}: new list of peers: {}\n".format(datetime.now().time(), peers_socks_vers_out))
+					print("\n{}: new list of peers: {}\n".format(time(), peers_socks_vers_out))
 			
 			peers_number = curr_peers_number
 
-		time.sleep(1)
+		Time.sleep(1)
 
 
 def print_active_peers_ports():
 	while True:
-		print("{}: active_peers_ports: {}".format(datetime.now().time(), active_peers_ports))
-		time.sleep(1)
+		print("{}: active_peers_ports: {}".format(time(), active_peers_ports))
+		Time.sleep(1)
 
 
 def print_blockchain_state():
@@ -516,11 +518,11 @@ def print_blockchain_state():
 		hash_of_new_highest_block = blockchain[new_bc_len-1].get_hash_hex()
 		if new_bc_len != current_bc_len or hash_of_highest_block != hash_of_new_highest_block:
 			print("{}: Now, the blockchain contains {} blocks (excluding the Genesis one):"\
-				.format(datetime.now().time(), len(blockchain)-1))
+				.format(time(), len(blockchain)-1))
 			for i in range(1, len(blockchain)):
-				print("{}: Block {} hash: {}".format(datetime.now().time(), i, blockchain[i].get_hash_hex()))
+				print("{}: Block {} hash: {}".format(time(), i, blockchain[i].get_hash_hex()))
 			current_bc_len = new_bc_len
-		time.sleep(1)
+		Time.sleep(1)
 
 
 def notify_peers_about_new_blocks():
@@ -557,21 +559,21 @@ def notify_peers_about_new_blocks():
 						socket.sendall(message)
 						if socket.recv(len(message)) != message:
 							print ("{}: Couldn't forward the new block {} to {}. It hasn't echoed \
-								\"take_new_block\"!".format(datetime.now().time(), block_nr, peer))
+								\"take_new_block\"!".format(time(), block_nr, peer))
 							continue
 
 						socket.sendall(block_tuple_pickled)
-						print("{}: Sent block {} with hash {} to {}".format(datetime.now().time(), block_nr, \
+						print("{}: Sent block {} with hash {} to {}".format(time(), block_nr, \
 							new_block.get_hash_hex(), peer))
 				except Exception as e:
 					print("{}: Something went wrong when trying to forward the new block {} to a peer: {}"\
-						.format(datetime.now().time(), block_nr, e))
+						.format(time(), block_nr, e))
 
 				peers_socks_vers_out_lock.release()
-			time.sleep(1) #brought massive improvement!
+			Time.sleep(1) #brought massive improvement!
 
 	except Exception as e:
-		print("\n{}: Stopped notifying peers about new blocks!\nCause: {}".format(datetime.now().time(), e))
+		print("\n{}: Stopped notifying peers about new blocks!\nCause: {}".format(time(), e))
 		print('Error on line {}'.format(sys.exc_info()[-1].tb_lineno), type(e).__name__, e)
 	
 	finally:
@@ -641,7 +643,7 @@ try:
 			connection_result = connect_to_a_peer(first_peer_port_nr)
 			if type(connection_result) is tuple:
 				peers_socks_vers_out.append(connection_result)
-				print("{}: Connected to {} from main".format(datetime.now().time(), first_peer_port_nr))
+				print("{}: Connected to {} from main".format(time(), first_peer_port_nr))
 			peers_socks_vers_out_lock.release()
 
 			if type(connection_result) is tuple:
@@ -659,7 +661,7 @@ try:
 			connect_to_peers_and_remember(socket_to_first_peer)
 			
 except Exception as e:
-	print("{}: {}".format(datetime.now().time(), e))
+	print("{}: {}".format(time(), e))
 finally:
 	if peers_socks_vers_out_lock.locked():
 		peers_socks_vers_out_lock.release()
@@ -670,7 +672,7 @@ Thread(target = maximize_active_peers).start()
 # Thread(target = print_active_peers_ports).start()
 
 while len(peers_socks_vers_out) == 0:
-	time.sleep(1)
+	Time.sleep(1)
 
 Thread(target = notify_peers_about_new_blocks).start()
 Thread(target = miner.mine_for_life, args = [blockchain, blockchain_lock, pub_key_compressed, \
