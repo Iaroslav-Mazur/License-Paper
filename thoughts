@@ -7,6 +7,7 @@ Problems:
 	- when a node mines a new block, it somehow becomes more likely to be the first to mine the next several blocks
 	- when an "important" node suddenly quits the network, de-sync happens
 	- recent_successful_connections are accessed concurrently without a lock
+	- unpickling stack underflow
 
 Features:
 	- rememberring the recent peers' addresses in order to re-connect with them on the next launch
