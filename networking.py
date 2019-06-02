@@ -1,36 +1,33 @@
 import key_gen
 import miner
 
-import socket as Socket
+import argparse
+from datetime import datetime
+from random import shuffle, sample
+import os.path
 import pickle
+import socket as Socket
+import sys
 from threading import Thread
 from threading import Lock
-import traceback
-import sys
-from threading import Lock
 import time as Time
-from datetime import datetime
-import argparse
-import os
-import os.path
-from random import shuffle, sample
-import hashlib
-import copy
 
-
-max_peers_lock = Lock() #the lock used to NOT accept more peers than I should
 
 SEED_NODE_PORT = 1500
+STATE_CATCHING_UP = False 	#transform it into a lock! (implies a lock and a publicly-accessible state for checking)
+
 MAX_NR_OF_CONN_OUT = 2
 MAX_NR_OF_CONN_IN = 4
 # MAX_NR_OF_CONN = MAX_NR_OF_CONN_IN + MAX_NR_OF_CONN_OUT
-STATE_CATCHING_UP = False 	#transform it into a lock! (implies a lock and a publicly-accessible state for checking)
-active_peers_ports = []
-peers_socks_vers_out = [] #the sockets in which I'm always the first one to write
-peers_socks_vers_out_lock = Lock() #must be used to avoid sending different requests to the same peers at the same time
 
-blockchain = [] #always to be modified after acquiring the blockchain_lock
+max_peers_lock = Lock() #the lock used to NOT accept more peers than I should
+active_peers_ports = []
+
+peers_socks_vers_out_lock = Lock() #must be used to avoid sending different requests to the same peers at the same time
+peers_socks_vers_out = [] #the sockets in which I'm always the first one to write
+
 blockchain_lock = Lock()
+blockchain = [] #always to be modified after acquiring the blockchain_lock
 
 priv_key = key_gen.generate_a_private_key()
 pub_key_compressed = key_gen.compress_the_public_key_point(key_gen.generate_the_public_key_point(priv_key))
@@ -39,17 +36,12 @@ pub_key_compressed = key_gen.compress_the_public_key_point(key_gen.generate_the_
 def time():
 	return datetime.now().time()
 
-class InvalidFirstCommandException(Exception):
-	pass
-class FullPeerException(Exception):
-	pass
-
 def talk_to_a_client(conn, addr):
 	addr_you = None
 	data = conn.recv(1024)
 	try:
 		if data != b'version_msg':
-			raise InvalidFirstCommandException("not a valid first command!")
+			raise Exception("not a valid first command!")
 		max_peers_lock.acquire()
 		if len(active_peers_ports) >= MAX_NR_OF_CONN_IN:
 			print("{}: {}, I'm full. Try connecting to my peers".format(time(), addr))
@@ -68,37 +60,38 @@ def talk_to_a_client(conn, addr):
 			
 		my_reply = bytes((str(current_time_you) + 'accepted').encode('UTF-8'))
 		conn.sendall(my_reply)
-		tmp = conn.recv(len(my_reply))
-		if tmp != my_reply:
-			print("{}: conn.recv(1024) != my_reply: {} != {}".format(time(), tmp, my_reply))
-			raise Exception("conn.recv(1024) != my_reply")
+		if conn.recv(len(my_reply)) != my_reply:
+			print("{}: conn.recv(len(my_reply)) != my_reply!".format(time()))
+			raise Exception("conn.recv(len(my_reply)) != my_reply")
 
 		my_version_msg = (Time.time(), addr_you, my_port_nr, len(blockchain)-1)
-		conn.sendall(pickle.dumps(my_version_msg))
-		if pickle.loads(conn.recv(1024)) != my_version_msg:
-			raise Exception("pickle.loads(conn.recv(1024)) != my_version_msg")
+		my_version_msg_dumped = pickle.dumps(my_version_msg)
+		conn.sendall(my_version_msg_dumped)
+		if conn.recv(len(my_version_msg_dumped)) != my_version_msg_dumped:
+			raise Exception("conn.recv(len(my_version_msg_dumped)) != my_version_msg_dumped")
 
-		ver_ack = conn.recv(1024)
+		anticipated_ver_ack = bytes((str(my_version_msg[0]) + 'accepted').encode('UTF-8'))
+		ver_ack = conn.recv(len(anticipated_ver_ack))
 		conn.sendall(ver_ack)
-		if ver_ack != bytes((str(my_version_msg[0]) + 'accepted').encode('UTF-8')):
-			raise Exception("ver_ack != bytes((str(my_version_msg[0]) + 'accepted').encode('UTF-8')")
+		if ver_ack != anticipated_ver_ack:
+			raise Exception("ver_ack != anticipated_ver_ack")
 							
 		if addr_you not in active_peers_ports: #are the above actions useless if addr_you is known?
 			active_peers_ports.append(addr_you)
 			remember_peers()
 		print("{}: Connected by {}".format(time(), addr_you))
 
+
 		#connect to the new peer in return
 		connection_result = None
 		peers_socks_vers_out_lock.acquire()
 		if find_socket_to(addr_you) is None:
-			print("connecting to the new peer {} in return".format(addr_you))
 			connection_result = connect_to_a_peer(addr_you)
 			
 			if type(connection_result) is not tuple:
 				print("{}: {}".format(time(), connection_result))
 				peers_socks_vers_out_lock.release()
-				raise FullPeerException("Couldn't connect in return to {}: the peer is full!".format(addr_you))
+				raise Exception("Couldn't connect in return to {}: the peer is full!".format(addr_you))
 
 			peers_socks_vers_out.append(connection_result)
 			print("{}: Connected to {}".format(time(), addr_you))
@@ -106,16 +99,12 @@ def talk_to_a_client(conn, addr):
 		peers_socks_vers_out_lock.release()
 		max_peers_lock.release()
 
-	except InvalidFirstCommandException:
-		conn.shutdown(Socket.SHUT_RDWR); conn.close()
-		return
-	except FullPeerException:
-		conn.shutdown(Socket.SHUT_RDWR); conn.close()
-		max_peers_lock.release()
-		return
-	except:
-		conn.shutdown(Socket.SHUT_RDWR); conn.close()
-		max_peers_lock.release()
+	except Exception as e:
+		print("{}: {}".format(time(), e))
+		conn.shutdown(Socket.SHUT_RDWR)
+		conn.close()
+		if max_peers_lock.locked():
+			max_peers_lock.release()
 		if peers_socks_vers_out_lock.locked():
 			peers_socks_vers_out_lock.release()
 		return
@@ -128,44 +117,38 @@ def talk_to_a_client(conn, addr):
 			conn.sendall(data) #just echo to show that I'm alive
 
 		elif data == b'get_peer_ports':
-			pickled_peers = pickle.dumps(active_peers_ports)
-			conn.sendall(pickled_peers)
+			conn.sendall(pickle.dumps(active_peers_ports))
 
 		elif data == b"reveal_your_top_block":
-			conn.sendall(pickle.dumps(len(blockchain) - 1))
+			conn.sendall(pickle.dumps(len(blockchain)-1))
 		
 		elif data == b"get_block":
 			conn.sendall(data)
-			wanted_block = conn.recv(1024)
-			wanted_block = pickle.loads(wanted_block)
+			wanted_block = pickle.loads(conn.recv(1024))
 			if wanted_block >= 0 and wanted_block < len(blockchain):
-				wanted_block_pickled = pickle.dumps(blockchain[wanted_block])
-				conn.sendall(wanted_block_pickled)
+				conn.sendall(pickle.dumps(blockchain[wanted_block]))
 		
 		elif data == b'take_new_block':
 			if STATE_CATCHING_UP is False:
 				conn.sendall(data)
-				new_block_tuple = conn.recv(1024)
-				block_id, block = pickle.loads(new_block_tuple)
-				print("{}: Received block {} with hash {}"\
-					.format(time(), block_id, block.get_hash_hex()))
-				Thread(target = react_to_take_new_block, \
-					args = [blockchain, blockchain_lock, block_id, block]).start()
+				block_id, block = pickle.loads(conn.recv(1024))
+				print("{}: Received block {} ({})".format(time(), block_id, block.get_hash_hex()))
+				Thread(target = react_to_take_new_block, args = [block_id, block]).start()
 			else:
-				conn.sendall(b"I can't accept any new blocks while catching up!")
+				conn.sendall(b"Can't accept any new blocks while catching up!")
 		
 		else:
 			print("{}: \n \"{}\" is not a valid command!\n".format(time(), data))
 	
-	conn.shutdown(Socket.SHUT_RDWR); conn.close()
+	shutdown_and_close(conn)
 
 		
-def react_to_take_new_block(blockchain, blockchain_lock, new_block_id, new_block):
+def react_to_take_new_block(new_block_id, new_block):
 	blockchain_lock.acquire()
 	len_blockchain = len(blockchain)
 	if new_block_id == len_blockchain:
 		#accept the direct child of the highest block
-		parent_block = blockchain[new_block_id-1]
+		parent_block = blockchain[len_blockchain-1]
 		if miner.is_block_valid(new_block, parent_block):
 			blockchain.append(new_block)
 			print("{}: Appended the received block {}  with hash {} to the blockchain"\
@@ -177,30 +160,29 @@ def react_to_take_new_block(blockchain, blockchain_lock, new_block_id, new_block
 		#accept new block with the same height as the highest one
 		parent_block = blockchain[new_block_id-1]
 		highest_block = blockchain[new_block_id]
-		if new_block.get_parent_hash() == highest_block.get_parent_hash()\
-			and miner.is_block_valid(new_block, parent_block):
-				new_block_hash = new_block.get_hash_hex()
-				highest_block_hash = highest_block.get_hash_hex()
+		if miner.is_block_valid(new_block, parent_block):
+			new_block_hash = new_block.get_hash_hex()
+			highest_block_hash = highest_block.get_hash_hex()
 
-				# accept it only if it has a bigger Proof Of Work:
-				new_block_nonce = new_block.get_nonce()
-				highest_block_nonce = highest_block.get_nonce()
-				if new_block_nonce > highest_block_nonce:
+			# accept only if it has a bigger Proof Of Work:
+			new_block_nonce = new_block.get_nonce()
+			highest_block_nonce = highest_block.get_nonce()
+			if new_block_nonce > highest_block_nonce:
+				blockchain[new_block_id] = new_block
+				#help propagate the replaced block
+				print("{}: Replaced the latest block {} ({}) with a new one that's been \
+					more difficult to mine ({})"\
+					.format(time(), new_block_id, highest_block_hash, new_block_hash))
+			
+			elif new_block_nonce == highest_block_nonce:
+				if int(new_block_hash, 16) < int(highest_block_hash, 16):
 					blockchain[new_block_id] = new_block
 					#help propagate the replaced block
-					print("{}: Replaced the latest block {} with hash {} with a new one that's been \
-						more difficult to mine with the hash {}"\
+					print("{}: Replaced the latest block {} with hash {} with a new one (hash: {}) \
+						with the same nonce, but smaller (int-wise) hash"\
 						.format(time(), new_block_id, highest_block_hash, new_block_hash))
-				
-				elif new_block_nonce == highest_block_nonce:
-					if int(new_block_hash, 16) < int(highest_block_hash, 16):
-						blockchain[new_block_id] = new_block
-						#help propagate the replaced block
-						print("{}: Replaced the latest block {} with hash {} with a new one (hash: {}) \
-							with the same nonce, but smaller (int-wise) hash"\
-							.format(time(), new_block_id, highest_block_hash, new_block_hash))
 	else:
-		print("{}: The new block {} isn't the direct child nor a sibling of block {}"\
+		print("{}: The new block {} isn't the direct child or a sibling of block {}"\
 			.format(time(), new_block_id, len_blockchain-1))
 	
 	blockchain_lock.release()
