@@ -1,7 +1,7 @@
 import key_gen
 import miner
 
-import socket
+import socket as Socket
 import pickle
 from threading import Thread
 from threading import Lock
@@ -29,9 +29,6 @@ active_peers_ports = []
 peers_socks_vers_out = [] #the sockets in which I'm always the first one to write
 peers_socks_vers_out_lock = Lock() #must be used to avoid sending different requests to the same peers at the same time
 
-#is it really needed?
-peers_socks_vers_in = [] #the sockets in which my peers are always the first ones to write
-
 blockchain = [] #always to be modified after acquiring the blockchain_lock
 blockchain_lock = Lock()
 
@@ -46,7 +43,6 @@ class InvalidFirstCommandException(Exception):
 	pass
 class FullPeerException(Exception):
 	pass
-
 
 def talk_to_a_client(conn, addr):
 	addr_you = None
@@ -87,9 +83,9 @@ def talk_to_a_client(conn, addr):
 		if ver_ack != bytes((str(my_version_msg[0]) + 'accepted').encode('UTF-8')):
 			raise Exception("ver_ack != bytes((str(my_version_msg[0]) + 'accepted').encode('UTF-8')")
 							
-		if addr_you not in active_peers_ports:
+		if addr_you not in active_peers_ports: #are the above actions useless if addr_you is known?
 			active_peers_ports.append(addr_you)
-		peers_socks_vers_in.append((conn, peers_version_msg))
+			remember_peers()
 		print("{}: Connected by {}".format(time(), addr_you))
 
 		#connect to the new peer in return
@@ -106,22 +102,19 @@ def talk_to_a_client(conn, addr):
 
 			peers_socks_vers_out.append(connection_result)
 			print("{}: Connected to {}".format(time(), addr_you))
-			remember_peers()
 				
 		peers_socks_vers_out_lock.release()
 		max_peers_lock.release()
-		# print("len(peers_socks_vers_out): ", len(peers_socks_vers_out))
 
 	except InvalidFirstCommandException:
-		conn.shutdown(socket.SHUT_RDWR); conn.close()
+		conn.shutdown(Socket.SHUT_RDWR); conn.close()
 		return
 	except FullPeerException:
-		conn.shutdown(socket.SHUT_RDWR); conn.close()
+		conn.shutdown(Socket.SHUT_RDWR); conn.close()
 		max_peers_lock.release()
-		#remove the in-socket from peers_socks_vers_in, as well??
 		return
 	except:
-		conn.shutdown(socket.SHUT_RDWR); conn.close()
+		conn.shutdown(Socket.SHUT_RDWR); conn.close()
 		max_peers_lock.release()
 		if peers_socks_vers_out_lock.locked():
 			peers_socks_vers_out_lock.release()
@@ -153,7 +146,6 @@ def talk_to_a_client(conn, addr):
 			if STATE_CATCHING_UP is False:
 				conn.sendall(data)
 				new_block_tuple = conn.recv(1024)
-				print("\nnew_block_tuple: {}\n".format(new_block_tuple))
 				block_id, block = pickle.loads(new_block_tuple)
 				print("{}: Received block {} with hash {}"\
 					.format(time(), block_id, block.get_hash_hex()))
@@ -165,7 +157,7 @@ def talk_to_a_client(conn, addr):
 		else:
 			print("{}: \n \"{}\" is not a valid command!\n".format(time(), data))
 	
-	conn.shutdown(socket.SHUT_RDWR); conn.close()
+	conn.shutdown(Socket.SHUT_RDWR); conn.close()
 
 		
 def react_to_take_new_block(blockchain, blockchain_lock, new_block_id, new_block):
@@ -217,7 +209,7 @@ def react_to_take_new_block(blockchain, blockchain_lock, new_block_id, new_block
 def connect_to_a_peer(peers_port): #peers_socks_vers_out_lock must be acquired when calling this method
 	print("{}: Connecting to {}".format(time(), peers_port))
 	try:
-		s = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+		s = Socket.socket(Socket.AF_INET, Socket.SOCK_STREAM)
 		s.connect(('', peers_port))
 		
 		version_msg = b'version_msg'
@@ -263,6 +255,7 @@ def connect_to_a_peer(peers_port): #peers_socks_vers_out_lock must be acquired w
 
 		if addr_you not in active_peers_ports: #are the above actions useless if addr_you is known?
 			active_peers_ports.append(addr_you)
+			remember_peers()
 
 
 		#sync our blockchains:
@@ -322,6 +315,7 @@ def connect_to_a_peer(peers_port): #peers_socks_vers_out_lock must be acquired w
 			
 			STATE_CATCHING_UP = False
 
+		# remember_peers()
 		return (s, pickle.loads(peers_version_msg))
 			
 	except Exception as e:
@@ -352,7 +346,6 @@ def connect_to_more_peers(peers_ports):
 			if type(connection_result) is tuple:
 				peers_socks_vers_out.append(connection_result)
 				print("{}: Connected to {}".format(time(), port_nr))
-				remember_peers()
 
 			elif type(connection_result) is list:
 				for peer in connection_result:
@@ -379,8 +372,8 @@ def get_peer_ports(socket_to_the_peer):
 
 
 def become_a_server(my_port_nr):
-	s = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
-	s.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1) #does it really make any difference?
+	s = Socket.socket(Socket.AF_INET, Socket.SOCK_STREAM)
+	s.setsockopt(Socket.SOL_SOCKET, Socket.SO_REUSEADDR, 1) #does it really make any difference?
 	s.bind(('', my_port_nr))
 	s.listen()
 	while True:
@@ -392,90 +385,66 @@ def become_a_server(my_port_nr):
 def remember_peers(): #must be accompanied by a lock
 	file_name = "recent_successful_connections" + str(my_port_nr)
 	with open(file_name, "w") as f:
-		for sock_ver in peers_socks_vers_out:
-			f.write(str(sock_ver[1][2]) + '\n')
+		for port in active_peers_ports:
+			f.write(str(port) + '\n')
 
 
 class PeerNotAliveException(Exception):
 	pass
 
-
 def monitor_the_peer_connections():
 	failed_still_alives = dict()
+	still_alive_msg = b'still alive'
 
 	def check_whether_alive():
-		try:
-			for sock_ver in peers_socks_vers_out[:]: #[:] refers to a shallow copy
-				socket_to_the_peer = sock_ver[0]
-				peers_port_nr = sock_ver[1][2]
-				still_alive_msg = b'still alive'
-				
-				peers_socks_vers_out_lock.acquire()
-				socket_to_the_peer.settimeout(1)
-				try:
-					socket_to_the_peer.sendall(still_alive_msg)
-					# print("\nSent still_alive to {}\n".format(peers_port_nr))
-					reply = socket_to_the_peer.recv(len(still_alive_msg))
+		Time.sleep(2)
+		
+		for sock_ver in peers_socks_vers_out[:]: #[:] refers to a shallow copy
+			socket = sock_ver[0]
+			peers_port = sock_ver[1][2]
+			
+			peers_socks_vers_out_lock.acquire()
+			socket.settimeout(1)
+			try:
+				socket.sendall(still_alive_msg)
+				reply = socket.recv(len(still_alive_msg))
+				if reply != still_alive_msg:
+					print("{}: +1 missed 'still alive' for {}".format(time(), peers_port))
+					raise PeerNotAliveException()
+				else:
+					#the peer is still alive - reset his counter
+					failed_still_alives[peers_port] = 0
+
+			except (IOError, PeerNotAliveException, Socket.timeout):
+				if peers_port in failed_still_alives:
+					failed_still_alives[peers_port] += 1
+					if failed_still_alives[peers_port] > 5:
+						print ("\n{}: {} is being forgotten!\n".format(time(), peers_port))
+						forget_a_peer(sock_ver)
+				else:
+					failed_still_alives[peers_port] = 1
+			
+			finally:
+				socket.settimeout(None)
+				if peers_socks_vers_out_lock.locked():
 					peers_socks_vers_out_lock.release()
-					if reply != still_alive_msg:
-						print("{}: +1 missed 'still alive' for {}".format(time(), peers_port_nr))
-						raise PeerNotAliveException("The peer has missed 1 still_alive")
-					else:
-						#the peer is still alive - reset its failed_still_alives counter
-						# print("\nReceived still_alive from {}\n".format(peers_port_nr))
-						failed_still_alives[peers_port_nr] = 0
-
-				except (IOError, PeerNotAliveException, socket.timeout):
-					if peers_socks_vers_out_lock.locked():
-						peers_socks_vers_out_lock.release()
-					if peers_port_nr in failed_still_alives:
-						failed_still_alives[peers_port_nr] += 1
-						if failed_still_alives[peers_port_nr] > 5:
-							print ("\n{}: {} is no longer alive!\n"\
-								.format(time(), peers_port_nr))
-							shutdown_close_remove(sock_ver)
-							remember_peers()
-					else:
-						failed_still_alives[peers_port_nr] = 1
-				
-				finally:
-					socket_to_the_peer.settimeout(None)
-
-		except Exception as e:
-			print("{}: {}".format(time(), e))
-		finally:
-			if peers_socks_vers_out_lock.locked():
-				peers_socks_vers_out_lock.release()
-
-	file_name = "recent_successful_connections" + str(my_port_nr)
 	while True:
 		check_whether_alive()
-		if not os.path.isfile(file_name): #move these if's outside the loop?
-			remember_peers()
-		elif os.stat(file_name).st_size == 0:
-				remember_peers()
-		Time.sleep(2)
 
 
-def shutdown_and_close(sock):
+def shutdown_and_close(socket):
 	try:
-		sock.shutdown(socket.SHUT_RDWR)
-	except socket.error:
-		pass
-	sock.close()
+		socket.shutdown(Socket.SHUT_RDWR)
+	except Socket.error as e:
+		print("{}: {}".format(time(), e))
+	socket.close()
 
 
-def shutdown_close_remove(sock_ver):
+def forget_a_peer(sock_ver): #peers_socks_vers_out_lock must be acquired when entering here
 	shutdown_and_close(sock_ver[0])
 	active_peers_ports.remove(sock_ver[1][2])
-	peers_socks_vers_out_lock.acquire()
 	peers_socks_vers_out.remove(sock_ver)
-	peers_socks_vers_out_lock.release()
-	
-	for tuples in peers_socks_vers_in:
-		if sock_ver == tuples[1][2]:
-			peers_socks_vers_in.remove(sock_ver)
-			break
+	remember_peers()
 
 
 def maximize_active_peers():
@@ -489,7 +458,6 @@ def maximize_active_peers():
 	try:
 		while True:
 			Time.sleep(1)
-			
 			nr_outer_conns = len(peers_socks_vers_out)
 			if nr_outer_conns < MAX_NR_OF_CONN_OUT and STATE_CATCHING_UP == False:
 				curr_peers_number = len(active_peers_ports)
@@ -503,12 +471,6 @@ def maximize_active_peers():
 	
 	except Exception as e:
 		print("\n{}: Stopped maximizing the number of active peers!\nCause: {}".format(time(), e))
-
-
-def print_active_peers_ports():
-	while True:
-		print("{}: active_peers_ports: {}".format(time(), active_peers_ports))
-		Time.sleep(1)
 
 
 def print_blockchain_state():
@@ -551,7 +513,7 @@ def notify_peers_about_new_blocks():
 				peers_socks_vers_out_lock.acquire()
 				if block.get_hash_hex() != blockchain[block_nr].get_hash_hex():
 					peers_socks_vers_out_lock.release()
-					break #the block has been replaced in the blockchain; no need to broadcast it anymore
+					break #the block has been replaced in the blockchain; would be wrong to broadcast it
 
 				for sock_ver in peers_socks_vers_out:
 					try:
@@ -591,17 +553,12 @@ def find_socket_to(port_nr):
 			break
 	return socket
 
+def add_genesis_block():
+	with open('genesis_block', 'rb') as f:
+		genesis_block = pickle.load(f)
+		blockchain.append(genesis_block)
 
-def connect_to_peers_and_remember(socket_to_the_peer):
-	peers_ports = get_peer_ports(socket_to_the_peer)
-	connect_to_more_peers(peers_ports)
-	remember_peers()
-
-
-with open('genesis_block', 'rb') as f:
-	genesis_block = pickle.load(f)
-	blockchain.append(genesis_block)
-
+add_genesis_block()
 
 parser = argparse.ArgumentParser()
 parser.add_argument("my_port_nr", type=int, 
@@ -649,14 +606,14 @@ try:
 
 		if type(connection_result) is tuple:
 			socket_to_first_peer = connection_result[0]
-			connect_to_peers_and_remember(socket_to_first_peer)
+			connect_to_more_peers(get_peer_ports(socket_to_first_peer))
 
 		elif type(connection_result) is list:
 			connect_to_more_peers(connection_result)
 			if len(peers_socks_vers_out) == 0:
 				raise Exception("Couldn't connect to no peers: nobody is free!") #should never get here
 		else:
-			print("List of peers received: {}".format(connection_result))
+			print("{}: List of peers received: {}".format(time(), connection_result))
 			raise Exception("Connection to first_peer_port_nr has failed!")
 			
 except Exception as e:
@@ -668,7 +625,6 @@ finally:
 
 Thread(target = monitor_the_peer_connections).start()
 Thread(target = maximize_active_peers).start()
-# Thread(target = print_active_peers_ports).start()
 
 while len(peers_socks_vers_out) is 0:
 	Time.sleep(1)
@@ -678,4 +634,5 @@ Thread(target = miner.mine_for_life, args = [blockchain, blockchain_lock, pub_ke
 	STATE_CATCHING_UP, peers_socks_vers_out]).start()
 # Thread(target = print_blockchain_state).start()
 
+# main()
 #Shutdown and close all sockets
