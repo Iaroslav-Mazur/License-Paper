@@ -102,12 +102,12 @@ def mine_for_life(blockchain, blockchain_lock, miners_pubkey_compressed, STATE_C
 
 
 	def mine_next_block(block_to_be_mined_nr_passed):
+		nr_of_peers = len(peers_socks_vers_out)
+		
 		block_to_be_mined_nr = block_to_be_mined_nr_passed
 		current_time_encoded = bytes(str(int(Time.time())).encode("UTF-8"))
 		parent_block_hash = blockchain[block_to_be_mined_nr - 1].get_hash_hex()
 		header = tx.Block_Header(parent_block_hash, merkle_root, current_time_encoded, POW_TARGET)
-
-		nr_of_peers = len(peers_socks_vers_out)
 
 		print("{}: Started mining block {}".format(time(), block_to_be_mined_nr))
 		for nonce in range(max_nonce):
@@ -122,8 +122,7 @@ def mine_for_life(blockchain, blockchain_lock, miners_pubkey_compressed, STATE_C
 					#return? this would mean losing all the work done while mining the current block
 
 			if STATE_CATCHING_UP == True:
-				print("\n{}: Stopping the mining because STATE_CATCHING_UP is True\n"\
-					.format(time()))
+				print("\n{}: Stopping the mining because STATE_CATCHING_UP is True\n".format(time()))
 				return block_to_be_mined_nr
 
 			chain_height = len(blockchain)
@@ -132,21 +131,20 @@ def mine_for_life(blockchain, blockchain_lock, miners_pubkey_compressed, STATE_C
 					print("{}: Block {} was mined by someone else. I've tried {} nonces. \
 						The block that should be mined now is {}. Pausing..."\
 						.format(time(), block_to_be_mined_nr, nonce, chain_height))
-				block_to_be_mined_nr = wait_long_enough(chain_height)
-				return block_to_be_mined_nr
+
+				return wait_long_enough(chain_height)
+
 			else:
 				highest_block_hash = blockchain[chain_height - 1].get_hash_hex()
 				if highest_block_hash != parent_block_hash:
 					if chain_height == block_to_be_mined_nr:
 						print("{}: Parent block ({}) has been replaced by the block {}! \
 									Gotta start mining block {} from zero. Pausing..."\
-									.format(time(), parent_block_hash, highest_block_hash, \
-									block_to_be_mined_nr))
+									.format(time(), parent_block_hash, highest_block_hash, block_to_be_mined_nr))
 					else:
-						print("{}: At least 1 block has been deleted from blockchain. Pausing..."\
-								.format(time()))
-					block_to_be_mined_nr = wait_long_enough(chain_height)
-					return block_to_be_mined_nr
+						print("{}: At least 1 block has been deleted from blockchain. Pausing...".format(time()))
+
+					return wait_long_enough(chain_height)
 
 			header_plus_nonce = header.header + bytes(nonce)
 			header_hash = hashlib.sha256(header_plus_nonce).hexdigest() #or, maybe, do double-hash?
@@ -161,24 +159,24 @@ def mine_for_life(blockchain, blockchain_lock, miners_pubkey_compressed, STATE_C
 					print("Right after I've mined the new block, the parent block with hash {} has been \
 							replaced by the block with hash {}! Gotta start mining the new block from zero.\
 							Pausing...".format(parent_block_hash, highest_block_hash))
+					
 					blockchain_lock.release()
-					block_to_be_mined_nr = wait_long_enough(chain_height)
-					return block_to_be_mined_nr
+					return wait_long_enough(chain_height)
 				
 				if chain_height > block_to_be_mined_nr:
 					print("{}: Block {} was mined by someone else right after I've mined it myself \
 						trying {} hashes. Pausing...".format(time(), block_to_be_mined_nr, nonce))
+					
 					blockchain_lock.release()
-					block_to_be_mined_nr = wait_long_enough(chain_height)
-					return block_to_be_mined_nr
+					return wait_long_enough(chain_height)
 				
 				blockchain.insert(block_to_be_mined_nr, mined_block)
 				blockchain_lock.release()
 
 				print("{}: Mined block {} ({}). Added it to the blockchain. Successful nonce: {}. Pausing..."\
 						.format(time(), block_to_be_mined_nr, header_hash, nonce))
-				block_to_be_mined_nr = wait_long_enough(block_to_be_mined_nr + 1)
-				return block_to_be_mined_nr
+				
+				return wait_long_enough(block_to_be_mined_nr + 1)
 
 		print("Failed after %d (max_nonce) tries" % max_nonce)
 		return block_to_be_mined_nr
@@ -192,8 +190,7 @@ def mine_for_life(blockchain, blockchain_lock, miners_pubkey_compressed, STATE_C
 	candidate = tx.Candidate_Block([coinbase_tx])
 	merkle_root = candidate.get_merkle_root()
 	
-	block_to_be_mined_nr_passed = len(blockchain)
-	block_to_be_mined_nr_passed = wait_long_enough(block_to_be_mined_nr_passed)
+	block_to_be_mined_nr_passed = wait_long_enough(len(blockchain))
 
 	while True:
 		block_to_be_mined_nr_passed = mine_next_block(block_to_be_mined_nr_passed)

@@ -1,0 +1,4 @@
+
+Run a python script:C:\Users\Iaroslav\AppData\Local\Programs\Python\Python37-32\python.exe networking.py 1600
+List all processes: tasklist
+To kill a process: taskkill /F /IM python.exe /T
